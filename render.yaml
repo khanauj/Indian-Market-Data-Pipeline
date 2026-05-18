@@ -1,0 +1,85 @@
+services:
+  # ─── FastAPI web service (read endpoints + /docs + /admin) ────────
+  - type: web
+    name: market-api
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    dockerCommand: api
+    plan: starter                     # starter $7/mo · upgrade for more RAM
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: "8000"
+      - key: API_WORKERS
+        value: "2"
+      - key: SCHEDULER_ENABLED        # API instance does NOT run scheduler
+        value: "false"
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: CACHE_ENABLED
+        value: "true"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: market-redis
+          property: connectionString
+      - fromGroup: market-pipeline
+
+  # ─── Background worker (scheduler + scrapers, no HTTP) ────────────
+  - type: worker
+    name: market-worker
+    runtime: docker
+    dockerfilePath: ./docker/Dockerfile
+    dockerCommand: worker
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: SCHEDULER_ENABLED
+        value: "true"
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: CACHE_ENABLED
+        value: "true"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: market-redis
+          property: connectionString
+      - fromGroup: market-pipeline
+
+  # ─── Redis (Render Key Value) ─────────────────────────────────────
+  - type: keyvalue
+    name: market-redis
+    plan: starter                     # 25 MB, $0 free tier
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []                   # private only
+
+# ─── Shared secrets (set values in Render dashboard once) ──────────
+envVarGroups:
+  - name: market-pipeline
+    envVars:
+      - key: DATABASE_URL             # Supabase pooled connection (port 6543)
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: ADMIN_API_KEY            # rotate from default before deploy
+        sync: false
+      - key: ALERT_WEBHOOK_URL        # optional Slack/Telegram
+        sync: false
+      - key: SENTRY_DSN               # optional
+        sync: false

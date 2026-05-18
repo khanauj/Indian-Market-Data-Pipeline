@@ -1,0 +1,71 @@
+version: "3.9"
+
+# Production overrides — used via:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Differences vs dev:
+#   • No bind-mounted logs directory (containers should log to stdout → log shipper)
+#   • restart: always (vs unless-stopped)
+#   • Worker process split out from the API (scheduler-only)
+#   • Grafana not exposed publicly
+#   • Resource limits applied
+
+services:
+  api:
+    environment:
+      ENV: production
+      SCHEDULER_ENABLED: "false"  # scheduler runs in the worker, not the API
+      LOG_LEVEL: INFO
+    volumes: []
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1G
+        reservations:
+          memory: 512M
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["worker"]
+    env_file: .env
+    environment:
+      ENV: production
+      SCHEDULER_ENABLED: "true"
+      LOG_LEVEL: INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+
+  redis:
+    restart: always
+    volumes:
+      - /var/lib/market-pipeline/redis:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 384M
+
+  prometheus:
+    restart: always
+    volumes:
+      - /var/lib/market-pipeline/prometheus:/prometheus
+
+  grafana:
+    restart: always
+    ports: []  # not publicly exposed in prod; reach via tunnel
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - /var/lib/market-pipeline/grafana:/var/lib/grafana
