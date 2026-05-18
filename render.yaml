@@ -9,6 +9,8 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      - key: PYTHON_VERSION           # belt-and-suspenders with runtime.txt
+        value: 3.12.8
       - key: ENV
         value: production
       - key: LOG_LEVEL
@@ -41,6 +43,8 @@ services:
     plan: starter
     autoDeploy: true
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
       - key: ENV
         value: production
       - key: LOG_LEVEL
