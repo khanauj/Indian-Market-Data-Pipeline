@@ -446,7 +446,7 @@ EQUITY_APIS_66_100 = [
     },
     {
         "num": 89, "name": "Company News", "url": "/v1/news/{symbol}",
-        "freq": "10-min", "update": "Every 10 minutes 24/7",
+        "freq": "30-min", "update": "Every 30 minutes 24/7",
         "inputs": [
             ("symbol", "Symbol (path, optional for market-wide)"),
             ("from_datetime", "Start"),

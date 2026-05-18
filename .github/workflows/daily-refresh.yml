@@ -1,0 +1,66 @@
+name: Daily EOD Data Refresh
+
+# Backup trigger for the daily 18:00 IST refresh.
+# Primary trigger is APScheduler running inside the Render worker service.
+# This workflow exists as a safety net — if the worker is down/sleeping,
+# this fires the admin endpoints over HTTPS to force a refresh.
+#
+# Why both? Render starter plan workers may sleep; this guarantees the
+# 18:00 IST EOD batch runs regardless of worker state.
+
+on:
+  schedule:
+    # 18:00 IST = 12:30 UTC (IST is UTC+5:30)
+    - cron: "30 12 * * *"
+  workflow_dispatch:  # manual trigger from GitHub UI
+
+jobs:
+  trigger-eod-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      API_BASE_URL: ${{ secrets.API_BASE_URL }}
+      ADMIN_API_KEY: ${{ secrets.ADMIN_API_KEY }}
+
+    steps:
+      - name: Verify secrets present
+        run: |
+          if [ -z "$API_BASE_URL" ] || [ -z "$ADMIN_API_KEY" ]; then
+            echo "::error::API_BASE_URL or ADMIN_API_KEY secret not set in repo settings"
+            exit 1
+          fi
+          echo "Target: $API_BASE_URL"
+
+      - name: Health probe (warm up Render service if sleeping)
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$API_BASE_URL/health" || echo 000)
+            echo "Health probe $i: $code"
+            if [ "$code" = "200" ]; then break; fi
+            sleep 15
+          done
+
+      - name: Trigger NSE gainers/losers
+        run: |
+          curl -fsS -X POST "$API_BASE_URL/admin/trigger/nse?task=gainers_losers" \
+               -H "X-Admin-Key: $ADMIN_API_KEY" --max-time 120 || echo "::warning::nse gainers_losers failed"
+
+      - name: Trigger NSE indices
+        run: |
+          curl -fsS -X POST "$API_BASE_URL/admin/trigger/nse?task=indices" \
+               -H "X-Admin-Key: $ADMIN_API_KEY" --max-time 120 || echo "::warning::nse indices failed"
+
+      - name: Trigger AMFI NAV
+        run: |
+          curl -fsS -X POST "$API_BASE_URL/admin/trigger/amfi" \
+               -H "X-Admin-Key: $ADMIN_API_KEY" --max-time 180 || echo "::warning::amfi failed"
+
+      - name: Trigger BSE filings (corporate actions)
+        run: |
+          curl -fsS -X POST "$API_BASE_URL/admin/trigger/bse?task=filings" \
+               -H "X-Admin-Key: $ADMIN_API_KEY" --max-time 180 || echo "::warning::bse filings failed"
+
+      - name: Final health check
+        run: |
+          curl -fsS "$API_BASE_URL/health" --max-time 30 | head -100

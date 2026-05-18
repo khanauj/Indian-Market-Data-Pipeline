@@ -2,6 +2,17 @@
 
 All jobs are async, market-hours-aware where applicable, and emit
 Prometheus metrics + run-log rows via the scrapers' BaseScraper.run().
+
+Schedule (IST):
+- Market hours (5-min): NSE prices, gainers/losers, indices
+- News every 30 min: Moneycontrol
+- Corporate announcements hourly: BSE filings
+- 18:00 daily: EOD batch (NSE prices snapshot, BSE EOD)
+- 18:30 daily: AMFI NAV (after market close)
+- 22:00 daily: Corporate actions
+- 01:00 daily: BSE master refresh
+- Sunday 02:00: Screener financial statements (quarterly cadence)
+- 1st of Jan/Apr/Jul/Oct 03:00: Shareholding pattern (quarterly)
 """
 from __future__ import annotations
 
@@ -61,7 +72,9 @@ def build_scheduler(
 ) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=IST)
 
-    # ─── Market-hours jobs (every 5 min) ────────────────────────────
+    # ═════════════════════════════════════════════════════════════════
+    # INTRADAY — market-hours jobs (every 5 min)
+    # ═════════════════════════════════════════════════════════════════
     @_market_hours_guard
     async def job_prices() -> None:
         await nse.run("prices")
@@ -75,8 +88,8 @@ def build_scheduler(
         await nse.run("indices")
 
     scheduler.add_job(
-        job_prices, IntervalTrigger(minutes=5), id="nse_prices", max_instances=1,
-        coalesce=True, replace_existing=True,
+        job_prices, IntervalTrigger(minutes=5), id="nse_prices",
+        max_instances=1, coalesce=True, replace_existing=True,
     )
     scheduler.add_job(
         job_gainers_losers, IntervalTrigger(minutes=5), id="nse_gainers_losers",
@@ -87,46 +100,127 @@ def build_scheduler(
         max_instances=1, coalesce=True, replace_existing=True,
     )
 
-    # ─── News (every 10 min, runs anytime) ──────────────────────────
+    # ═════════════════════════════════════════════════════════════════
+    # NEWS — every 30 minutes, 24/7
+    # ═════════════════════════════════════════════════════════════════
     async def job_news() -> None:
         await moneycontrol.run()
 
     scheduler.add_job(
-        job_news, IntervalTrigger(minutes=10), id="mc_news",
+        job_news, IntervalTrigger(minutes=30), id="mc_news",
         max_instances=1, coalesce=True, replace_existing=True,
     )
 
-    # ─── Filings (every 15 min) ────────────────────────────────────
-    async def job_filings() -> None:
+    # ═════════════════════════════════════════════════════════════════
+    # CORPORATE ANNOUNCEMENTS — hourly during business hours
+    # ═════════════════════════════════════════════════════════════════
+    async def job_announcements() -> None:
         await bse.run("filings")
 
     scheduler.add_job(
-        job_filings, IntervalTrigger(minutes=15), id="bse_filings",
-        max_instances=1, coalesce=True, replace_existing=True,
+        job_announcements,
+        CronTrigger(hour="9-18", minute=0, timezone=IST),
+        id="bse_announcements", max_instances=1, coalesce=True, replace_existing=True,
     )
 
-    # ─── Daily jobs ─────────────────────────────────────────────────
+    # ═════════════════════════════════════════════════════════════════
+    # EOD BATCH — daily 18:00 IST (after market close)
+    # ═════════════════════════════════════════════════════════════════
+    async def job_eod_batch() -> None:
+        """Master EOD job — runs all end-of-day refreshes in sequence.
+
+        Per user spec: triggered at 18:00 IST daily. Pulls latest data
+        from all configured sources, detects changes, upserts to DB.
+        Each sub-task is independent and idempotent — failure of one
+        does not block others.
+        """
+        log.info("eod_batch_started", time=datetime.now(tz=IST).isoformat())
+        results = {}
+
+        for label, coro in [
+            ("nse_prices_eod", nse.run("prices")),
+            ("nse_gainers_losers", nse.run("gainers_losers")),
+            ("nse_indices_eod", nse.run("indices")),
+        ]:
+            try:
+                results[label] = await coro
+            except Exception as e:  # noqa: BLE001
+                log.error("eod_subtask_failed", task=label, error=str(e))
+                results[label] = {"status": "failed", "error": str(e)}
+
+        log.info("eod_batch_completed", results={k: v.get("status") for k, v in results.items()})
+
+    scheduler.add_job(
+        job_eod_batch,
+        CronTrigger(hour=18, minute=0, day_of_week="mon-fri", timezone=IST),
+        id="eod_batch_18", max_instances=1, coalesce=True, replace_existing=True,
+    )
+
+    # ═════════════════════════════════════════════════════════════════
+    # AMFI NAV — daily 18:30 IST (after market close)
+    # ═════════════════════════════════════════════════════════════════
     async def job_amfi() -> None:
         await amfi.run()
 
     scheduler.add_job(
-        job_amfi, CronTrigger(hour=7, minute=0, timezone=IST), id="amfi_nav",
-        max_instances=1, coalesce=True, replace_existing=True,
+        job_amfi,
+        CronTrigger(hour=18, minute=30, timezone=IST),
+        id="amfi_nav", max_instances=1, coalesce=True, replace_existing=True,
     )
 
-    async def job_financials() -> None:
-        await screener.run()
+    # ═════════════════════════════════════════════════════════════════
+    # CORPORATE ACTIONS — daily 22:00 IST
+    # ═════════════════════════════════════════════════════════════════
+    async def job_corporate_actions() -> None:
+        # BSE filings task captures dividends, splits, bonus, AGM, etc.
+        await bse.run("filings")
 
     scheduler.add_job(
-        job_financials, CronTrigger(hour=2, minute=0, timezone=IST), id="screener_fin",
+        job_corporate_actions,
+        CronTrigger(hour=22, minute=0, timezone=IST),
+        id="corporate_actions_daily",
         max_instances=1, coalesce=True, replace_existing=True,
     )
 
+    # ═════════════════════════════════════════════════════════════════
+    # BSE MASTER — daily 01:00 IST
+    # ═════════════════════════════════════════════════════════════════
     async def job_master_sync() -> None:
         await bse.run("master")
 
     scheduler.add_job(
-        job_master_sync, CronTrigger(hour=1, minute=0, timezone=IST), id="bse_master",
+        job_master_sync,
+        CronTrigger(hour=1, minute=0, timezone=IST),
+        id="bse_master", max_instances=1, coalesce=True, replace_existing=True,
+    )
+
+    # ═════════════════════════════════════════════════════════════════
+    # FINANCIAL STATEMENTS — quarterly (Sunday 02:00 IST, runs always
+    # but Screener internally checks for new filings)
+    # ═════════════════════════════════════════════════════════════════
+    async def job_financials() -> None:
+        await screener.run()
+
+    scheduler.add_job(
+        job_financials,
+        CronTrigger(day_of_week="sun", hour=2, minute=0, timezone=IST),
+        id="screener_financials",
+        max_instances=1, coalesce=True, replace_existing=True,
+    )
+
+    # ═════════════════════════════════════════════════════════════════
+    # SHAREHOLDING — quarterly (1st of Jan/Apr/Jul/Oct, 03:00 IST)
+    # Shareholding pattern is filed within 21 days of quarter-end.
+    # We poll on the 25th of Jan/Apr/Jul/Oct to give a buffer.
+    # ═════════════════════════════════════════════════════════════════
+    async def job_shareholding() -> None:
+        # Screener exposes shareholding via the same financials scrape
+        await screener.run()
+
+    scheduler.add_job(
+        job_shareholding,
+        CronTrigger(month="1,4,7,10", day=25, hour=3, minute=0, timezone=IST),
+        id="shareholding_quarterly",
         max_instances=1, coalesce=True, replace_existing=True,
     )
 

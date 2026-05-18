@@ -97,7 +97,7 @@ EQUITY_APIS_31_65 = [
     },
     {
         "num": 36, "name": "Corporate Actions (All)", "url": "/v1/corporate-actions",
-        "freq": "EOD", "update": "22:00 IST",
+        "freq": "EOD", "update": "22:00 IST daily",
         "inputs": [
             ("symbol", "Filter by symbol"),
             ("action_type", "DIVIDEND/BONUS/SPLIT/RIGHTS/BUYBACK/MERGER/DEMERGER/NAME_CHANGE"),
@@ -275,7 +275,7 @@ EQUITY_APIS_31_65 = [
     },
     {
         "num": 45, "name": "Corporate Announcements", "url": "/v1/announcements",
-        "freq": "15-min", "update": "Every 15 minutes 09:00-18:00 IST",
+        "freq": "Hourly", "update": "Hourly 09:00-18:00 IST",
         "inputs": [
             ("symbol", "Symbol filter"),
             ("category", "financial/management_change/strategic/regulatory"),
@@ -301,7 +301,7 @@ EQUITY_APIS_31_65 = [
     },
     {
         "num": 46, "name": "Face Value Changes", "url": "/v1/face-value-changes/{symbol}",
-        "freq": "EOD", "update": "22:00 IST",
+        "freq": "EOD", "update": "22:00 IST daily",
         "inputs": [("symbol", "NSE symbol"), ("from_date", "Start"), ("to_date", "End")],
         "outputs": [
             ("change_id", "BIGINT", "Primary key"),
@@ -315,7 +315,7 @@ EQUITY_APIS_31_65 = [
     },
     {
         "num": 47, "name": "Share Capital Changes", "url": "/v1/share-capital/{symbol}",
-        "freq": "EOD", "update": "22:00 IST",
+        "freq": "EOD", "update": "22:00 IST daily",
         "inputs": [("symbol", "NSE symbol"), ("from_date", "Start"), ("to_date", "End")],
         "outputs": [
             ("change_id", "BIGINT", "Primary key"),

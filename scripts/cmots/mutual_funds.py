@@ -108,7 +108,7 @@ MF_APIS = [
     },
     {
         "num": 6, "name": "Daily NAV", "url": "/v1/mf/nav/{scheme_code}",
-        "freq": "EOD", "update": "23:00 IST",
+        "freq": "EOD", "update": "18:30 IST daily (after market close)",
         "inputs": [
             ("scheme_code", "AMFI scheme code (path)"),
             ("nav_date", "Specific date (optional, default latest)"),
@@ -128,7 +128,7 @@ MF_APIS = [
     },
     {
         "num": 7, "name": "NAV History", "url": "/v1/mf/nav/{scheme_code}/history",
-        "freq": "EOD", "update": "23:00 IST",
+        "freq": "EOD", "update": "18:30 IST daily (after market close)",
         "inputs": [
             ("scheme_code", "Scheme code"),
             ("from_date", "Start date"),
@@ -460,7 +460,7 @@ MF_APIS = [
     },
     {
         "num": 25, "name": "IDCW (Dividend) History", "url": "/v1/mf/{scheme_code}/idcw",
-        "freq": "EOD", "update": "23:00 IST",
+        "freq": "EOD", "update": "18:30 IST daily (after market close)",
         "inputs": [
             ("scheme_code", "Scheme code"),
             ("from_date", "Start"),

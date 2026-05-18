@@ -6,7 +6,7 @@
 EQUITY_APIS_1_30 = [
     {
         "num": 1, "name": "Company Master", "url": "/v1/company-master",
-        "freq": "EOD", "update": "23:30 IST",
+        "freq": "EOD", "update": "18:00 IST daily",
         "inputs": [
             ("symbol", "NSE trading symbol (optional)"),
             ("bse_code", "BSE numeric security code (optional)"),
@@ -65,7 +65,7 @@ EQUITY_APIS_1_30 = [
     },
     {
         "num": 3, "name": "Listed Securities", "url": "/v1/listed-securities",
-        "freq": "EOD", "update": "23:45 IST",
+        "freq": "EOD", "update": "18:00 IST daily",
         "inputs": [
             ("exchange", "NSE/BSE/BOTH filter"),
             ("series", "Trading series (EQ/BE/BZ/SM for NSE; A/B/T/Z for BSE)"),
@@ -356,7 +356,7 @@ EQUITY_APIS_1_30 = [
     },
     {
         "num": 17, "name": "Daily OHLC History", "url": "/v1/ohlc/daily/{symbol}",
-        "freq": "EOD", "update": "18:30 IST",
+        "freq": "EOD", "update": "18:00 IST daily",
         "inputs": [
             ("symbol", "NSE symbol (path)"),
             ("from", "Start date YYYY-MM-DD"),
@@ -577,7 +577,7 @@ EQUITY_APIS_1_30 = [
     },
     {
         "num": 28, "name": "Index OHLC History", "url": "/v1/index/{name}/ohlc",
-        "freq": "EOD", "update": "18:30 IST",
+        "freq": "EOD", "update": "18:00 IST daily",
         "inputs": [
             ("name", "Index name"),
             ("from", "Start date"),

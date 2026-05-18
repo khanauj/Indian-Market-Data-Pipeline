@@ -290,4 +290,98 @@ CMOTS_COMMENTS = [
      "User-uploaded portfolio (CSV or broker integration) gets returns, attribution, factor "
      "exposure, risk decomposition. Requires: portfolios table, transactions table, "
      "computation engine. Estimated effort 3 weeks. Premium tier feature."),
+
+    # ─── Automation & Scheduler Architecture (per latest spec) ──────────────
+    ("Daily 18:00 IST EOD Master Trigger",
+     "Primary daily batch fires at 18:00 IST Mon-Fri via APScheduler CronTrigger inside "
+     "the worker container. Runs NSE prices snapshot, gainers/losers, indices in sequence. "
+     "AMFI NAV fires separately at 18:30 IST. Corporate actions consolidate at 22:00 IST. "
+     "Job ID: eod_batch_18 — visible in scheduler_run_log table."),
+
+    ("Scheduler Implementation Choice",
+     "APScheduler (AsyncIO variant) chosen over Celery Beat / Airflow because: (1) single-"
+     "process simplicity matches single Render worker, (2) IST timezone first-class via "
+     "ZoneInfo, (3) max_instances=1 + coalesce=True prevents job overlap, (4) no external "
+     "broker (Redis/RabbitMQ) needed for the queue. For 10x scale, migrate to Celery + Redis."),
+
+    ("Backup Trigger via GitHub Actions",
+     "Belt-and-suspenders: .github/workflows/daily-refresh.yml fires daily at 12:30 UTC "
+     "(=18:00 IST), hits /admin/trigger/* endpoints over HTTPS with X-Admin-Key header. "
+     "Safety net for when Render worker is sleeping/restarting. Requires repo secrets: "
+     "API_BASE_URL, ADMIN_API_KEY. Failures emit ::warning:: annotations."),
+
+    ("Incremental Update Strategy",
+     "Every UPSERT uses natural composite keys (ON CONFLICT DO UPDATE). Re-ingesting the "
+     "same row updates only the changed fields. Historical price data is append-only "
+     "(no DELETE) — partitioning by month keeps queries fast. mf_nav_history partitions "
+     "by year. Corporate actions are UPSERT-by-(symbol, action_type, ex_date) so amendments "
+     "to announced actions are captured but no duplicates."),
+
+    ("Retry Logic Specification",
+     "Tenacity wrapper in BaseScraper._get(): max 4 retries (configurable via HTTP_MAX_RETRIES), "
+     "exponential backoff with jitter (1s -> 2s -> 4s -> 8s, cap 30s), retry only on "
+     "TimeoutException / HTTPStatusError / RateLimitError. After exhaustion: scraper_failures_total "
+     "metric increments with reason=retry_exhausted, run logged FAILED in scraper_run_log."),
+
+    ("Audit Columns (source_name / last_refresh_time / data_version)",
+     "Alembic migration 0002_audit_columns adds three audit columns to all ingest tables. "
+     "source_name identifies origin scraper (nse/bse/amfi/screener/moneycontrol). last_refresh_time "
+     "auto-defaults to NOW() on insert. data_version starts at 1, app-level UPDATE triggers "
+     "increment it. Existing rows backfilled with source_name='legacy', data_version=1."),
+
+    ("Refresh Cadence Per Dataset",
+     "EOD market data: 18:00 IST daily. AMFI NAV: 18:30 IST daily. Corporate actions: "
+     "22:00 IST daily. Shareholding pattern: 25th of Jan/Apr/Jul/Oct at 03:00 IST (quarterly). "
+     "Financial statements (Screener): Sunday 02:00 IST weekly (Screener side updates lazily). "
+     "Corporate announcements: hourly 09:00-18:00 IST. News: every 30 minutes 24/7. "
+     "BSE master: 01:00 IST daily. Real-time prices: every 5 min during market hours only."),
+
+    ("Logging Pipeline (Structured)",
+     "structlog JSON to stdout (captured by Render/CloudWatch). Each scraper run emits: "
+     "(1) run_ok / run_failed event with source, task, inserted, skipped, duration_s; "
+     "(2) row in scraper_run_log table (auditable from SQL); (3) Prometheus counters. "
+     "DQ violations land in data_quality_log with severity (info/warning/error/critical). "
+     "Schema mismatches (Pydantic ValidationError) drop the row + log to data_quality_log."),
+
+    ("Worker Service Topology on Render",
+     "render.yaml defines two services: market-api (web, SCHEDULER_ENABLED=false, serves "
+     "/docs and /health) + market-worker (background, SCHEDULER_ENABLED=true, runs ALL "
+     "scheduled jobs). Critical: scheduler MUST run in exactly one place; running it in "
+     "both web replicas would double every ingest. APScheduler is in-memory (not Redis-"
+     "backed) so single-instance constraint is enforced architecturally."),
+
+    ("Historical Data Preservation",
+     "Price history, NAV history, corporate actions, shareholding snapshots are NEVER "
+     "overwritten. Each ingest of the same (symbol, date) updates current-value fields "
+     "but preserves the row. Quarterly shareholding stored as new row per period - "
+     "historical comparison is a simple WHERE period_end_date <= X query. Materialized "
+     "views (mv_52week, mv_mf_returns) recomputed nightly from full history."),
+
+    ("Failure Alerting",
+     "Any scraper run with status=FAILED auto-posts to ALERT_WEBHOOK_URL (Slack/Discord/"
+     "Telegram). Payload: source, task, error_class, error_message, last_success_at. "
+     "Aggregation: if same source fails 3 consecutive times, circuit opens (no upstream "
+     "calls for 60s), Prometheus alert triggers PagerDuty for market-hours, Slack for "
+     "off-hours. SLA: 1 hour acknowledgement during 09:15-15:30 IST, 4 hours otherwise."),
+
+    ("Excel Workbook Refresh",
+     "The CMOTS_Data_Catalog.xlsx documentation workbook is regenerated by "
+     "scripts/build_cmots_excel.py. Run it manually after API spec changes, or wire into "
+     "CI to regenerate on every push to main. The workbook contains 95 equity APIs + 40 "
+     "MF APIs + this comments sheet with current refresh frequencies and update times. "
+     "Source of truth for API contracts."),
+
+    ("Schema Migration Strategy",
+     "Alembic for all schema changes. Migration 0001_initial sets up all 38 tables and "
+     "indexes. 0002_audit_columns adds source_name / last_refresh_time / data_version "
+     "additively (no data loss). Future migrations follow same pattern: additive first, "
+     "drop-column in a later release after consumers migrate. Run via "
+     "'docker compose run --rm market-api migrate' or scripts/migrate.sh."),
+
+    ("Data Versioning Semantics",
+     "data_version starts at 1 on INSERT. App-level handlers increment on every UPDATE "
+     "via UPSERT-returning-old-version pattern. Use case: client polling can pass "
+     "If-None-Match: <data_version> header and receive 304 Not Modified when unchanged. "
+     "Also enables optimistic concurrency control - reject UPDATE if data_version "
+     "in WHERE doesn't match current row version."),
 ]

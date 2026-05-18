@@ -31,6 +31,15 @@ HEADER_COLS = [
     "Input", "Input Description", "Output", "Data Type", "Output Description",
 ]
 
+# Audit columns appended to every API's outputs (per automation spec).
+AUDIT_OUTPUTS = [
+    ("source_name", "TEXT", "Origin source identifier (nse/bse/screener/amfi/moneycontrol)"),
+    ("last_refresh_time", "TIMESTAMPTZ", "When this row was last refreshed from source"),
+    ("data_version", "INTEGER", "Auto-incremented version number for change tracking"),
+    ("created_at", "TIMESTAMPTZ", "Row creation timestamp (UTC)"),
+    ("updated_at", "TIMESTAMPTZ", "Row last-update timestamp (UTC)"),
+]
+
 # ─── Styling ──────────────────────────────────────────────────────────
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
@@ -78,7 +87,8 @@ def write_api_sheet(ws, apis: list[dict]) -> int:
         ]
         fill = ALT_FILL_A if api_idx % 2 == 0 else ALT_FILL_B
 
-        outputs = api.get("outputs", []) or [("", "", "")]
+        # Append audit columns to every API's output list
+        outputs = list(api.get("outputs", []) or [("", "", "")]) + AUDIT_OUTPUTS
         for out_name, out_type, out_desc in outputs:
             values = api_metadata + [out_name, out_type, out_desc]
             for col_idx, val in enumerate(values, start=1):
@@ -147,7 +157,13 @@ def build_workbook(output_path: Path) -> dict:
 
 if __name__ == "__main__":
     out = ROOT / "data" / "exports" / "CMOTS_Data_Catalog.xlsx"
-    result = build_workbook(out)
+    try:
+        result = build_workbook(out)
+    except PermissionError:
+        # File is open in Excel — write to a v2 file
+        out = ROOT / "data" / "exports" / "CMOTS_Data_Catalog_v2.xlsx"
+        print(f"  [PermissionError on primary file — writing to {out.name}]")
+        result = build_workbook(out)
     print(f"\n  EQUITY sheet:        {result['equity_apis']} APIs, {result['equity_rows']} rows")
     print(f"  MUTUAL FUNDS sheet:  {result['mf_apis']} APIs, {result['mf_rows']} rows")
     print(f"  CMOTS COMMENTS:      {result['comment_rows']} rows")
